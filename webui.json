@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "required_capabilities": ["custom_pages"],
+  "pages": [{
+    "id": "skills", "title": "Skills 技能管理", "placement": "sidebar", "icon": "database",
+    "description": "技能安装、按需加载与执行记录", "mode": "custom", "entry": "webui/skills.html", "layout": "viewport",
+    "queries": {
+      "status": {"api": "skills.status"},
+      "detail": {"api": "skills.detail", "parameters": {"name": {"type": "string", "required": true, "max_length": 64}}}
+    },
+    "actions": {
+      "configure": {"api": "skills.configure", "parameters": {
+        "enabled": {"type": "boolean", "required": true}, "admin_session_id": {"type": "string", "max_length": 200},
+        "timeout": {"type": "integer"}, "daily_limit": {"type": "integer"}
+      }},
+      "install": {"api": "skills.install", "parameters": {"url": {"type": "string", "required": true, "max_length": 1500}}},
+      "toggle": {"api": "skills.toggle", "parameters": {"name": {"type": "string", "required": true, "max_length": 64}, "enabled": {"type": "boolean", "required": true}}},
+      "remove": {"api": "skills.remove", "parameters": {"name": {"type": "string", "required": true, "max_length": 64}}},
+      "cancel": {"api": "skills.cancel", "parameters": {"run_id": {"type": "string", "required": true, "max_length": 32}}}
+    }
+  }]
+}
