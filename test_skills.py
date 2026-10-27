@@ -210,10 +210,22 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.obj.configure(True, admin_session_id='s')
         p = package();p['name'] = 'example';p['commit'] = 'a'*40
         with patch.object(plugin, 'fetch_github', return_value=p) as fetch:
-            result = await self.obj.install_command(stream_id='s', matched_groups={'skill_url': url})
+            self.row['processed_plain_text'] = '上一条普通聊天，不包含安装命令'
+            result = await self.obj.install_command(stream_id='s', matched_groups={'skill_url': url},
+                user_id='u', platform='test', text='/install-skill '+url)
             self.assertTrue(result[0]);self.assertTrue(result[2]);fetch.assert_called_once()
         self.row['processed_plain_text'] = '普通聊天'
         self.assertFalse((await self.obj.install_tool(url=url, stream_id='s'))['success'])
+
+    async def test_command_context_must_match_real_user_and_url(self):
+        await self.obj.configure(True, admin_session_id='s')
+        url = 'https://github.com/a/repo'
+        with patch.object(plugin, 'fetch_github') as fetch:
+            for uid, text in [('other', '/install-skill '+url), ('u', '/install-skill https://github.com/other/repo')]:
+                result = await self.obj.install_command(stream_id='s', matched_groups={'skill_url': url},
+                    user_id=uid, platform='test', text=text)
+                self.assertFalse(result[0])
+            fetch.assert_not_called()
 
     async def test_admin_account_isolation_and_unbind(self):
         await self.obj.configure(True, admin_session_id='s')

@@ -146,14 +146,26 @@ class SkillsSupport(MaiBotPlugin):
         return {'success': True, 'name': package['name'], 'commit': package['commit'],
                 'skipped_files': package['skipped_files'], 'notice': '已安装并启用文档。包内脚本和二进制未安装、不会执行。'}
 
-    async def install_from_chat(self, session, url):
-        stream, row = await self.caller(session)
+    async def install_from_chat(self, session, url, command_context=None):
+        if command_context is None:
+            stream, row = await self.caller(session)
+            text = str(row.get('processed_plain_text') or '')
+        else:
+            # Host dispatches slash commands before normal message persistence.
+            # Authenticate its command context, not a potentially older DB row.
+            stream = next((r for r in await self.streams() if (r.get('session_id') or r.get('stream_id')) == session), None)
+            if not stream or not command_context.get('user_id') or not command_context.get('platform'):
+                raise PermissionError('无法核验命令发言者')
+            if str(command_context['user_id']) != str(stream.get('user_id')) or command_context['platform'] != stream.get('platform'):
+                raise PermissionError('命令发言者与会话身份不符')
+            text = str(command_context.get('text') or '')
+            if not re.fullmatch(r'/install-skill\s+' + re.escape(url) + r'\s*', text):
+                raise ValueError('安装命令内容与 GitHub 地址不符')
         config = await asyncio.to_thread(self.store.settings)
         if not config['enabled']:
             raise ValueError('Skills 功能未开启')
         if not config['administrator'] or identity(stream) != config['administrator']:
             raise PermissionError('只有后台指定的管理员可以安装技能')
-        text = str(row.get('processed_plain_text') or '')
         if url not in re.findall(r'https://github\.com/[^\s<>"，。]+', text) or not install_requested(text, url):
             raise ValueError('当前管理员消息必须明确包含安装请求和完整 GitHub 地址')
         return await self.install(url)
@@ -168,12 +180,12 @@ class SkillsSupport(MaiBotPlugin):
             return {'success': False, 'error': str(exc)}
 
     @Command('install_skill', description='管理员从GitHub安装Skill', pattern=r'^/install-skill(?:\s+(?P<skill_url>\S+))?\s*$', permission='public')
-    async def install_command(self, stream_id='', matched_groups=None, **kwargs):
+    async def install_command(self, stream_id='', matched_groups=None, user_id='', platform='', text='', **kwargs):
         url = (matched_groups or {}).get('skill_url') or ''
         try:
             if not url:
                 raise ValueError('用法：/install-skill https://github.com/owner/repo/tree/main/path/to/skill')
-            result = await self.install_from_chat(stream_id, url)
+            result = await self.install_from_chat(stream_id, url, {'user_id': user_id, 'platform': platform, 'text': text})
             message = f"已安装技能 {result['name']}，版本 {result['commit'][:12]}。仅加载文档，不执行脚本。"
         except (ValueError, PermissionError) as exc:
             await self.ctx.send.text(str(exc), stream_id=stream_id)
