@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "anse.skills-support",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "name": "Skills 技能管理",
   "description": "让麦麦办事更靠谱！安装、创建和管理 Skills，按步骤查资料、做任务，还能更新和还原技能。",
   "author": {
@@ -40,5 +40,6 @@
     "supported_locales": [
       "zh-CN"
     ]
-  }
+  },
+  "plugin_type": "management"
 }

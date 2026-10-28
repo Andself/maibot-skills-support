@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from maibot_sdk import API, Action, Command, HookHandler, MaiBotPlugin
+from maibot_sdk import API, Tool, Command, HookHandler, MaiBotPlugin
 
 from .skills import fetch_github, parse_skill, safe_path
 from .store import Store
@@ -213,9 +213,8 @@ class SkillsSupport(MaiBotPlugin):
             raise ValueError('当前管理员消息必须明确包含安装请求和完整 GitHub 地址')
         return await self.install(url)
 
-    @Action('skill_install_github', description='仅管理员明确请求时，从GitHub地址安装指定文档型Skill；不会运行仓库脚本。',
-        action_parameters={'url': '管理员本条消息中的完整GitHub技能目录或SKILL.md地址'},
-        action_require=['管理员明确要求安装指定GitHub Skill时使用'], associated_types=['text'])
+    @Tool('skill_install_github', description='仅管理员明确请求时，从GitHub地址安装指定文档型Skill；不会运行仓库脚本。 使用条件：管理员明确要求安装指定GitHub Skill时使用。',
+        parameters={'url': {'type': 'string', 'description': '管理员本条消息中的完整GitHub技能目录或SKILL.md地址', 'required': True}})
     async def install_tool(self, url='', stream_id='', **kwargs):
         try:
             return await self.install_from_chat(stream_id, url)
@@ -282,9 +281,8 @@ class SkillsSupport(MaiBotPlugin):
             return {'success': True, 'name': skill['name'], 'source': 'local',
                     'notice': '已生成并保存本地 SKILL.md，可在技能管理查看、关闭或移除。不会上传 GitHub。'}
 
-    @Action('skill_create_local', description='管理员明确要求时，根据需求生成并本地保存文档型Skill。使用宿主模型，不上传GitHub。',
-        action_parameters={'description': '管理员描述的技能需求，4至3000字'},
-        action_require=['管理员明确要求创建一个新Skill时使用'], associated_types=['text'])
+    @Tool('skill_create_local', description='管理员明确要求时，根据需求生成并本地保存文档型Skill。使用宿主模型，不上传GitHub。 使用条件：管理员明确要求创建一个新Skill时使用。',
+        parameters={'description': {'type': 'string', 'description': '管理员描述的技能需求，4至3000字', 'required': True}})
     async def create_tool(self, description='', stream_id='', **kwargs):
         try:
             authority = await self.create_authorized(stream_id)
@@ -330,10 +328,8 @@ class SkillsSupport(MaiBotPlugin):
                 await asyncio.to_thread(self.store.notice, run['id'], sent)
         return await asyncio.to_thread(self.store.current, session)
 
-    @Action('skill_control', description='按需启动、查询、取消、完成Skills任务。finish校验本条消息后的真实工具结果，不能自行声明已查代替证据。',
-        action_parameters={'operation': 'start/status/cancel/finish/fail', 'skill_name': '目录中的技能名称',
-                           'query': 'start时提供独立完整任务，不含账号和凭据'},
-        action_require=['需要加载某个技能或管理当前技能任务时使用'], associated_types=['text'])
+    @Tool('skill_control', description='按需启动、查询、取消、完成Skills任务。finish校验本条消息后的真实工具结果，不能自行声明已查代替证据。 使用条件：需要加载某个技能或管理当前技能任务时使用。',
+        parameters={'operation': {'type': 'string', 'description': 'start/status/cancel/finish/fail', 'enum': ['start', 'status', 'cancel', 'finish', 'fail']}, 'skill_name': {'type': 'string', 'description': '目录中的技能名称'}, 'query': {'type': 'string', 'description': 'start时提供独立完整任务，不含账号和凭据'}})
     async def control(self, operation='status', skill_name='', query='', stream_id='', **kwargs):
         try:
             _, row = await self.caller(stream_id)
@@ -372,9 +368,8 @@ class SkillsSupport(MaiBotPlugin):
         except ValueError as exc:
             return {'success': False, 'error': str(exc)}
 
-    @Action('skill_read_reference', description='读取当前技能包内的参考文档；只读文本，不接受系统路径或URL。',
-        action_parameters={'path': '相对技能根目录的文档路径，如references/guide.md'},
-        action_require=['已激活技能需要读取附带参考文档时使用'], associated_types=['text'])
+    @Tool('skill_read_reference', description='读取当前技能包内的参考文档；只读文本，不接受系统路径或URL。 使用条件：已激活技能需要读取附带参考文档时使用。',
+        parameters={'path': {'type': 'string', 'description': '相对技能根目录的文档路径，如references/guide.md', 'required': True}})
     async def read_reference(self, path='', stream_id='', **kwargs):
         try:
             _, row = await self.caller(stream_id)

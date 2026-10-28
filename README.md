@@ -6,7 +6,7 @@
 
 为 MaiBot 提供文档型 [Agent Skills](https://agentskills.io/specification) 支持：从 GitHub 安装技能，在聊天中创建技能，用 WebUI 管理、更新和还原，并查看实际工具执行记录。
 
-[![Version](https://img.shields.io/badge/version-0.4.1-blue)](_manifest.json)
+[![Version](https://img.shields.io/badge/version-0.4.2-blue)](_manifest.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MaiBot](https://img.shields.io/badge/MaiBot-1.3.14–1.3.16-orange)](_manifest.json)
 

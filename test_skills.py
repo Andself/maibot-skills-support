@@ -463,3 +463,22 @@ class VersionTests(unittest.TestCase):
             self.assertEqual(v['current']['updated'], 20)
             self.assertEqual(v['history'][0]['updated'], 10)
             self.assertEqual(len(v['history'][0]['id']), 32)
+
+
+class ToolDeclarationTests(unittest.TestCase):
+    def test_sdk_tool_schemas_keep_parameters_and_hide_host_identity(self):
+        from maibot_sdk.components import _build_tool_parameters_schema
+        found = {}
+        for name in dir(plugin.SkillsSupport):
+            method = getattr(plugin.SkillsSupport, name)
+            info = getattr(method, '__maibot_component_info__', None)
+            if info is not None and getattr(info, 'name', '') in ('skill_install_github', 'skill_create_local', 'skill_control', 'skill_read_reference'):
+                found[info.name] = info
+        self.assertEqual(len(found), 4)
+        for info in found.values():
+            schema = _build_tool_parameters_schema(info.parameters_raw)
+            self.assertTrue(schema['properties'])
+            self.assertNotIn('stream_id', schema['properties'])
+            self.assertEqual(info.invoke_method, 'plugin.invoke_tool')
+        self.assertEqual(_build_tool_parameters_schema(found['skill_install_github'].parameters_raw)['required'], ['url'])
+        self.assertEqual(_build_tool_parameters_schema(found['skill_control'].parameters_raw)['properties']['operation']['enum'], ['start','status','cancel','finish','fail'])
