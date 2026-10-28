@@ -3,6 +3,8 @@ import json
 import sqlite3
 import time
 import uuid
+import re
+from urllib.parse import urlsplit
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -24,7 +26,11 @@ class Store:
                   UNIQUE(session,message));
                 CREATE TABLE IF NOT EXISTS evidence(run_id TEXT NOT NULL,call_id TEXT NOT NULL,tool TEXT NOT NULL,
                   success INTEGER NOT NULL,observed REAL NOT NULL,PRIMARY KEY(run_id,call_id));
+                CREATE TABLE IF NOT EXISTS seed_state(name TEXT PRIMARY KEY,removed INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS revisions(name TEXT NOT NULL,package TEXT NOT NULL,changed REAL NOT NULL);
             ''')
+            if 'urls' not in {r[1] for r in db.execute('PRAGMA table_info(evidence)')}:
+                db.execute("ALTER TABLE evidence ADD COLUMN urls TEXT NOT NULL DEFAULT '[]'")
             db.execute('INSERT OR IGNORE INTO settings VALUES(1,?)', (json.dumps(DEFAULTS),))
 
     @contextmanager
@@ -56,6 +62,11 @@ class Store:
     def install(self, package, builtin=False):
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
+            if builtin:
+                seed = db.execute('SELECT removed FROM seed_state WHERE name=?', (package['name'],)).fetchone()
+                if seed and seed['removed']:
+                    return False
+                db.execute('INSERT OR IGNORE INTO seed_state(name) VALUES(?)', (package['name'],))
             old = db.execute('SELECT 1 FROM skills WHERE name=?', (package['name'],)).fetchone()
             if old:
                 if builtin:
@@ -64,6 +75,20 @@ class Store:
             if db.execute('SELECT count(*) FROM skills').fetchone()[0] >= 40:
                 raise ValueError('最多安装40个技能')
             db.execute('INSERT INTO skills VALUES(?,?,?,?)', (package['name'], json.dumps(package), 1, time.time()))
+        return True
+
+    def replace(self, name, package, expected_digest):
+        if package['name'] != name:
+            raise ValueError('上游技能名称已变化，未覆盖原技能')
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old = db.execute('SELECT package FROM skills WHERE name=?', (name,)).fetchone()
+            if not old or json.loads(old['package']).get('digest') != expected_digest:
+                raise ValueError('技能已被移除或更新，请刷新重试')
+            if old['package'] == json.dumps(package):
+                return False
+            db.execute('INSERT INTO revisions VALUES(?,?,?)', (name, old['package'], time.time()))
+            db.execute('UPDATE skills SET package=? WHERE name=?', (json.dumps(package), name))
         return True
 
     def catalog(self):
@@ -89,6 +114,7 @@ class Store:
 
     def remove(self, name):
         with self.db() as db:
+            db.execute('INSERT OR REPLACE INTO seed_state VALUES(?,1)', (name,))
             db.execute('DELETE FROM skills WHERE name=?', (name,))
             db.execute("UPDATE runs SET status='canceled',updated=? WHERE skill=? AND status='running'", (time.time(), name))
 
@@ -157,16 +183,37 @@ class Store:
                 if isinstance(result, dict) and (result.get('success') is False or result.get('error')
                         or result.get('status') in ('error', 'failed', 'unavailable')):
                     success = False
-                db.execute('INSERT OR IGNORE INTO evidence VALUES(?,?,?,?,?)', (run['id'], call_id, name, int(success), time.time()))
+                urls = []
+                if success and name in ('fetch_page', 'web_fetch'):
+                    call = next((i.get('tool_call', {}) for i in items if i.get('tool_call', {}).get('call_id') == call_id), {})
+                    args = call.get('args') or {}
+                    requested = args.get('url', '') if isinstance(args, dict) else ''
+                    # Embedded hyperlinks were not themselves fetched. Only the
+                    # requested page (or a tool's leading canonical URL) counts.
+                    candidates = [requested] if requested else [line.strip() for line in str(output).splitlines()[:4]
+                        if re.fullmatch(r'https?://[^\s<>"\u3000]+', line.strip())][:1]
+                    for url in candidates:
+                        url = url.rstrip('。，；、)）]')
+                        try:
+                            parsed = urlsplit(url)
+                            if parsed.scheme in ('http', 'https') and parsed.hostname and not parsed.username and not parsed.password and url not in urls:
+                                urls.append(url)
+                        except ValueError:
+                            continue
+                db.execute('INSERT OR IGNORE INTO evidence(run_id,call_id,tool,success,observed,urls) VALUES(?,?,?,?,?,?)',
+                           (run['id'], call_id, name, int(success), time.time(), json.dumps(urls[:6])))
 
     def progress(self, run):
         package = json.loads(run['package'])
         with self.db() as db:
-            evidence = [dict(r) for r in db.execute('SELECT call_id,tool,success,observed FROM evidence WHERE run_id=? ORDER BY observed', (run['id'],))]
+            evidence = [dict(r) for r in db.execute('SELECT call_id,tool,success,observed,urls FROM evidence WHERE run_id=? ORDER BY observed', (run['id'],))]
+        for r in evidence:
+            r['urls'] = json.loads(r['urls'])
         used = {r['tool'] for r in evidence if r['success']}
         missing = [group for group in package.get('required', []) if not used.intersection(group)]
         return {'id': run['id'], 'skill': run['skill'], 'status': run['status'], 'query': run['query'],
                 'created': run['created'], 'notice': run['notice'], 'evidence': evidence, 'missing_tools': missing,
+                'sources': list(dict.fromkeys(u for r in evidence for u in r['urls'])),
                 'verification': '仅验证真实工具执行记录，不保证来源内容或最终答案正确'}
 
     def runs(self):

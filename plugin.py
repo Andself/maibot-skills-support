@@ -54,6 +54,11 @@ def install_requested(text, url):
     return bool(re.match(r'^(?:请帮我|请|麻烦|帮我|给我|我想要|我想|我要)?\s*(?:安装|装上|装一下)', text))
 
 
+def builtin_package(text):
+    return {**parse_skill(text, 'deep-research'), 'files': {'SKILL.md': text},
+            'source': 'builtin', 'commit': '', 'digest': hashlib.sha256(text.encode()).hexdigest(), 'skipped_files': 0}
+
+
 class SkillsSupport(MaiBotPlugin):
     async def on_load(self):
         self.store = await asyncio.to_thread(Store, self.ctx.paths.data_dir)
@@ -62,10 +67,8 @@ class SkillsSupport(MaiBotPlugin):
         self.request_baselines = {}
         path = Path(__file__).parent / 'skills/deep-research/SKILL.md'
         text = await asyncio.to_thread(path.read_text, encoding='utf-8')
-        skill = parse_skill(text, 'deep-research')
-        await asyncio.to_thread(self.store.install, {**skill, 'files': {'SKILL.md': text},
-            'source': 'builtin', 'commit': '', 'digest': hashlib.sha256(text.encode()).hexdigest(),
-            'skipped_files': 0}, True)
+        self.builtin = builtin_package(text)
+        await asyncio.to_thread(self.store.install, self.builtin, True)
 
     async def on_unload(self):
         await asyncio.to_thread(self.store.interrupt)
@@ -133,6 +136,33 @@ class SkillsSupport(MaiBotPlugin):
     async def remove(self, name: str):
         await asyncio.to_thread(self.store.remove, name)
         return {'success': True}
+
+    @API('skills.update', public=False)
+    async def update(self, name: str):
+        async with self.install_lock:
+            old = await asyncio.to_thread(self.store.skill, name, False)
+            if old['source'] == 'builtin':
+                package = self.builtin
+            else:
+                url = old.get('install_url')
+                if not url:
+                    # 0.1.0 stored repository + directory but not the original ref.
+                    # Do not guess which branch to follow.
+                    raise ValueError('旧安装记录缺少原始地址，请先在后台指定更新地址')
+                package = await asyncio.to_thread(fetch_github, url)
+            changed = await asyncio.to_thread(self.store.replace, name, package, old.get('digest'))
+        return {'success': True, 'changed': changed, 'commit': package['commit'],
+                'notice': '已更新，原启停状态保留；正在运行的任务继续使用启动时版本。' if changed else '已经是该安装地址的最新版本。'}
+
+    @API('skills.set_origin', public=False)
+    async def set_origin(self, name: str, url: str):
+        async with self.install_lock:
+            old = await asyncio.to_thread(self.store.skill, name, False)
+            if old['source'] == 'builtin':
+                raise ValueError('内置示例随插件提供，不需要 GitHub 更新地址')
+            package = await asyncio.to_thread(fetch_github, url)
+            await asyncio.to_thread(self.store.replace, name, package, old.get('digest'))
+        return {'success': True, 'notice': '已验证并更新技能，后续将使用此地址更新。'}
 
     @API('skills.cancel', public=False)
     async def cancel(self, run_id: str):
@@ -277,6 +307,26 @@ class SkillsSupport(MaiBotPlugin):
     @HookHandler('maisaka.replyer.before_model_request', name='skills_replyer')
     async def replyer(self, items=None, session_id='', **kwargs):
         return await self.background(items, session_id, kwargs, False)
+
+    @HookHandler('maisaka.replyer.after_response', name='skills_citations')
+    async def citations(self, response='', session_id='', **kwargs):
+        if not (await asyncio.to_thread(self.store.settings))['enabled'] or not response:
+            return {'action': 'continue'}
+        try:
+            _, row = await self.caller(session_id)
+        except ValueError:
+            return {'action': 'continue'}
+        run = await asyncio.to_thread(self.store.current, session_id)
+        if not run or run['message'] != str(row['message_id']) or run['status'] not in ('running', 'completed', 'failed'):
+            return {'action': 'continue'}
+        if not json.loads(run['package']).get('require_citations'):
+            return {'action': 'continue'}
+        progress = await asyncio.to_thread(self.store.progress, run)
+        missing = [u for u in progress['sources'][:3] if u not in response]
+        if not missing:
+            return {'action': 'continue'}
+        return {'action': 'continue', 'modified_kwargs': {**kwargs, 'session_id': session_id,
+            'response': response + '\n\n已读取的来源（供核对）：\n' + '\n'.join(missing)}}
 
     async def background(self, items, session, payload, planner):
         config = await asyncio.to_thread(self.store.settings)

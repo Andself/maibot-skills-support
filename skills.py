@@ -66,7 +66,8 @@ def parse_skill(text, directory_name=None):
     return {'name': name, 'description': description.strip(), 'body': parts[1].strip(),
             'compatibility': str(meta.get('compatibility', ''))[:500],
             'allowed_tools': str(meta.get('allowed-tools', ''))[:2000],
-            'triggers': phrases, 'required': required, 'document': text}
+            'triggers': phrases, 'required': required, 'document': text,
+            'require_citations': metadata.get('maibot-require-citations') == 'true'}
 
 
 def github_location(url):
@@ -173,5 +174,5 @@ def fetch_github(url):
         documents[relative] = raw
     skill = parse_skill(documents['SKILL.md'], directory.split('/')[-1] if directory else repo)
     digest = hashlib.sha256(json.dumps(documents, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-    return {**skill, 'files': documents, 'source': f'https://github.com/{owner}/{repo}',
+    return {**skill, 'files': documents, 'source': f'https://github.com/{owner}/{repo}', 'install_url': url,
             'commit': commit, 'directory': directory, 'digest': digest, 'skipped_files': skipped}

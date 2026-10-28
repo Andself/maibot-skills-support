@@ -110,6 +110,38 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.s.install(package())
 
+    def test_deleted_builtin_is_not_reseeded_after_restart(self):
+        self.s.remove('deep-research')
+        s = store.Store(self.tmp.name)
+        self.assertFalse(s.install(package(), builtin=True))
+        self.assertEqual(s.catalog(), [])
+
+    def test_update_preserves_enabled_and_running_snapshot(self):
+        run, _ = self.s.start('deep-research', 's', 'm', 'query', [])
+        old = self.s.skill('deep-research')
+        newer = {**old, 'digest': 'next', 'body': 'New instructions'}
+        self.s.toggle('deep-research', False)
+        self.assertTrue(self.s.replace('deep-research', newer, old['digest']))
+        self.assertFalse(self.s.catalog()[0]['enabled'])
+        self.assertNotEqual(json.loads(run['package'])['digest'], self.s.skill('deep-research', False)['digest'])
+        with self.s.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM revisions').fetchone()[0], 1)
+
+    def test_update_races_and_rename_do_not_overwrite(self):
+        p = self.s.skill('deep-research')
+        with self.assertRaises(ValueError):
+            self.s.replace('deep-research', {**p, 'name': 'renamed'}, p['digest'])
+        with self.assertRaises(ValueError):
+            self.s.replace('deep-research', p, 'stale-digest')
+        self.assertEqual(self.s.skill('deep-research')['digest'], p['digest'])
+
+    def test_body_hyperlinks_are_not_mislabeled_as_read_sources(self):
+        run, _ = self.s.start('deep-research', 's', 'm', 'query', [])
+        items = evidence('web_fetch', output='正文提到 https://example.com/not-read')
+        items[0]['tool_call']['args'] = {'url': 'https://example.com/actually-read'}
+        self.s.observe(run, items)
+        self.assertEqual(self.s.progress(run)['sources'], ['https://example.com/actually-read'])
+
     def test_same_message_dedup_and_new_topic_supersedes(self):
         run, fresh = self.s.start('deep-research', 's', 'm', 'query', [])
         self.assertTrue(fresh)
@@ -248,6 +280,36 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.obj.ctx.send.text.side_effect = RuntimeError('offline')
         await self.obj.planner(items=[], session_id='s')
         self.assertEqual(self.obj.store.current('s')['notice'], 'failed')
+
+    async def test_update_from_recorded_url_and_failure_is_atomic(self):
+        p = package();p.update(name='example', source='https://github.com/a/repo',
+            install_url='https://github.com/a/repo/tree/dev/example', commit='a'*40)
+        self.obj.store.install(p)
+        self.obj.store.toggle('example', False)
+        with patch.object(plugin, 'fetch_github', return_value={**p, 'digest': 'new', 'commit': 'b'*40}) as fetch:
+            r = await self.obj.update('example')
+            self.assertTrue(r['changed'])
+            fetch.assert_called_once_with(p['install_url'])
+        self.assertFalse(next(s for s in self.obj.store.catalog() if s['name']=='example')['enabled'])
+        with patch.object(plugin, 'fetch_github', side_effect=ValueError('offline')):
+            with self.assertRaises(ValueError):
+                await self.obj.update('example')
+        self.assertEqual(self.obj.store.skill('example', False)['commit'], 'b'*40)
+
+    async def test_citations_only_use_current_successful_body_sources(self):
+        await self.obj.planner(items=[], session_id='s')
+        await self.obj.planner(items=evidence('web_search', 's')+evidence('web_fetch', 'f', output='https://example.com/read'), session_id='s')
+        r = await self.obj.citations(response='有限结论', session_id='s')
+        self.assertIn('https://example.com/read', r['modified_kwargs']['response'])
+        r = await self.obj.citations(response='结论 https://example.com/read', session_id='s')
+        self.assertNotIn('modified_kwargs', r)
+        self.row['message_id'] = 'next'
+        self.assertNotIn('modified_kwargs', await self.obj.citations(response='闲聊', session_id='s'))
+
+    async def test_deleted_builtin_does_not_return_on_load(self):
+        await self.obj.remove('deep-research')
+        await self.obj.on_load()
+        self.assertEqual(self.obj.store.catalog(), [])
 
 
 if __name__ == '__main__':
