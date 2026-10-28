@@ -6,9 +6,9 @@
 
 为 MaiBot 提供文档型 [Agent Skills](https://agentskills.io/specification) 支持：从 GitHub 安装技能，在聊天中创建技能，用 WebUI 管理、更新和还原，并查看实际工具执行记录。
 
-[![Version](https://img.shields.io/badge/version-0.4.0-blue)](_manifest.json)
+[![Version](https://img.shields.io/badge/version-0.4.1-blue)](_manifest.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![MaiBot](https://img.shields.io/badge/MaiBot-1.3.14–1.3.15-orange)](_manifest.json)
+[![MaiBot](https://img.shields.io/badge/MaiBot-1.3.14–1.3.16-orange)](_manifest.json)
 
 ## 从一句需求，到一套可复用的方法
 
@@ -36,7 +36,7 @@ Skill 使用 `SKILL.md` 描述适用场景与操作步骤。平时只向 Agent �
 
 ### 1. 安装插件
 
-当前兼容范围为 **MaiBot 1.3.14–1.3.15 / Plugin SDK 2.16.x**，依赖 `PyYAML >=6,<7`。
+当前兼容范围为 **MaiBot 1.3.14–1.3.16 / Plugin SDK 2.16.x**，依赖 `PyYAML >=6,<7`。
 
 从源码构建发布包：
 
