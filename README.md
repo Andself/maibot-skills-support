@@ -1,6 +1,8 @@
 # MaiBot Skills Support
 
-**让 MaiBot 按技能做事，让过程有据可查。**
+**让麦麦办事更靠谱！**
+
+给麦麦一本能随用随学的「办事手册」：查资料、做任务，按步骤来。
 
 为 MaiBot 提供文档型 [Agent Skills](https://agentskills.io/specification) 支持：从 GitHub 安装技能，在聊天中创建技能，用 WebUI 管理、更新和还原，并查看实际工具执行记录。
 
