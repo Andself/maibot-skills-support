@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "anse.skills-support",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "name": "Skills 技能管理",
   "description": "Agent Skills 文档加载、GitHub 安装、聊天安装命令与技能运行记录。",
   "author": {

@@ -81,7 +81,9 @@ class FormatTests(unittest.TestCase):
         def opened(req, **kwargs):
             url = req.full_url
             requests.append(url)
-            if '/commits/' in url:
+            if '/commits?' in url:
+                value = [{'sha': 'b' * 40}]
+            elif '/commits/' in url:
                 value = {'sha': 'a' * 40}
             elif '/git/trees/' in url:
                 value = {'tree': [dict(path=p, type='blob', mode='100644', size=100)
@@ -93,7 +95,8 @@ class FormatTests(unittest.TestCase):
             return io.BytesIO(json.dumps(value).encode())
         with patch.object(skills.urllib.request, 'build_opener', return_value=types.SimpleNamespace(open=opened)):
             p = skills.fetch_github('https://github.com/owner/repo/tree/main/skills/sample')
-        self.assertEqual(p['commit'], 'a' * 40)
+        self.assertEqual(p['commit'], 'b' * 40)
+        self.assertEqual(p['snapshot_commit'], 'a' * 40)
         self.assertEqual(p['skipped_files'], 1)
         self.assertEqual(set(p['files']), {'SKILL.md', 'references/a.md'})
         self.assertTrue(all('/' + 'a'*40 + '/' in u for u in requests if 'raw.githubusercontent.com' in u))
@@ -390,3 +393,73 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class VersionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.s = store.Store(self.tmp.name)
+        self.p = {**package(), 'source': 'https://github.com/a/b', 'install_url': 'https://github.com/a/b', 'commit': 'a'*40}
+        self.s.install(self.p)
+
+    def change(self, n):
+        old = self.s.skill('deep-research', False)
+        self.s.replace('deep-research', {**self.p, 'digest': str(n), 'commit': str(n)*40}, old['digest'])
+
+    def test_retention_and_roundtrip(self):
+        for n in range(1, 6): self.change(n)
+        v = self.s.versions('deep-research')
+        self.assertEqual([r['digest'] for r in v['history']], ['4', '3', '2'])
+        self.s.toggle('deep-research', False)
+        self.s.restore('deep-research', v['history'][1]['id'], v['current']['digest'])
+        self.assertEqual(self.s.skill('deep-research', False)['digest'], '3')
+        self.assertFalse(self.s.catalog()[0]['enabled'])
+        v = self.s.versions('deep-research')
+        self.assertEqual(v['history'][0]['digest'], '5')
+        self.s.restore('deep-research', v['history'][0]['id'], '3')
+        self.assertEqual(self.s.skill('deep-research', False)['digest'], '5')
+
+    def test_snapshot_source_and_running_task(self):
+        run, _ = self.s.start('deep-research', 's', 'm', 'q', [])
+        self.change(1)
+        p = self.s.skill('deep-research')
+        self.s.replace('deep-research', {**p, 'install_url': 'https://github.com/new/repo'}, p['digest'])
+        v = self.s.versions('deep-research')
+        self.s.restore('deep-research', v['history'][0]['id'], '1')
+        restored = self.s.skill('deep-research')
+        self.assertEqual(restored['files'], self.p['files'])
+        self.assertEqual(restored['install_url'], 'https://github.com/new/repo')
+        self.assertEqual(self.s.current('s')['package'], run['package'])
+        self.assertEqual(self.s.current('s')['status'], 'running')
+
+    def test_stale_missing_and_nononline_rejected(self):
+        self.change(1)
+        v = self.s.versions('deep-research')
+        for rid, digest in ((v['history'][0]['id'], 'stale'), ('missing', '1')):
+            with self.assertRaises(ValueError): self.s.restore('deep-research', rid, digest)
+        self.assertEqual(self.s.skill('deep-research')['digest'], '1')
+        self.s.remove('deep-research')
+        self.s.install(package())
+        with self.assertRaises(ValueError): self.s.versions('deep-research')
+        with self.assertRaises(ValueError): self.s.restore('deep-research', v['history'][0]['id'], 'test')
+
+    def test_metadata_only_does_not_archive(self):
+        date = self.s.catalog()[0]['updated']
+        self.assertFalse(self.s.replace('deep-research', {**self.p, 'snapshot_commit': 'b'*40}, 'test'))
+        self.assertEqual(self.s.versions('deep-research')['history'], [])
+        self.assertEqual(self.s.catalog()[0]['updated'], date)
+
+    def test_legacy_database_migration(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as root:
+            db = sqlite3.connect(Path(root)/'skills.sqlite3')
+            db.executescript('CREATE TABLE skills(name TEXT PRIMARY KEY,package TEXT NOT NULL,enabled INTEGER NOT NULL,installed REAL NOT NULL); CREATE TABLE revisions(name TEXT NOT NULL,package TEXT NOT NULL,changed REAL NOT NULL);')
+            db.execute('INSERT INTO skills VALUES(?,?,?,?)', ('deep-research', json.dumps(self.p), 1, 10))
+            db.execute('INSERT INTO revisions VALUES(?,?,?)', ('deep-research', json.dumps(self.p), 20))
+            db.commit(); db.close()
+            s = store.Store(root)
+            v = s.versions('deep-research')
+            self.assertEqual(v['current']['updated'], 20)
+            self.assertEqual(v['history'][0]['updated'], 10)
+            self.assertEqual(len(v['history'][0]['id']), 32)

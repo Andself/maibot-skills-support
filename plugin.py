@@ -168,6 +168,15 @@ class SkillsSupport(MaiBotPlugin):
             await asyncio.to_thread(self.store.replace, name, package, old.get('digest'))
         return {'success': True, 'notice': '已验证并更新技能，后续将使用此地址更新。'}
 
+    @API('skills.versions', public=False)
+    async def versions(self, name: str):
+        return await asyncio.to_thread(self.store.versions, name)
+
+    @API('skills.restore', public=False)
+    async def restore(self, name: str, revision_id: str, expected_digest: str):
+        async with self.install_lock:
+            return await asyncio.to_thread(self.store.restore, name, revision_id, expected_digest)
+
     @API('skills.cancel', public=False)
     async def cancel(self, run_id: str):
         return {'success': await asyncio.to_thread(self.store.update, run_id, 'canceled')}

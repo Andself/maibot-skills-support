@@ -26,6 +26,16 @@
               "max_length": 64
             }
           }
+        },
+        "versions": {
+          "api": "skills.versions",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            }
+          }
         }
       },
       "actions": {
@@ -114,6 +124,26 @@
               "type": "string",
               "required": true,
               "max_length": 1500
+            }
+          }
+        },
+        "restore": {
+          "api": "skills.restore",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "revision_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 32
+            },
+            "expected_digest": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
             }
           }
         }

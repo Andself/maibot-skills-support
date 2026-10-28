@@ -31,6 +31,21 @@ class Store:
             ''')
             if 'urls' not in {r[1] for r in db.execute('PRAGMA table_info(evidence)')}:
                 db.execute("ALTER TABLE evidence ADD COLUMN urls TEXT NOT NULL DEFAULT '[]'")
+            if 'updated' not in {r[1] for r in db.execute('PRAGMA table_info(skills)')}:
+                db.execute('ALTER TABLE skills ADD COLUMN updated REAL NOT NULL DEFAULT 0')
+                db.execute('UPDATE skills SET updated=COALESCE((SELECT MAX(changed) FROM revisions WHERE revisions.name=skills.name),installed)')
+            columns = {r[1] for r in db.execute('PRAGMA table_info(revisions)')}
+            if 'id' not in columns:
+                db.execute("ALTER TABLE revisions ADD COLUMN id TEXT NOT NULL DEFAULT ''")
+            if 'applied' not in columns:
+                db.execute('ALTER TABLE revisions ADD COLUMN applied REAL NOT NULL DEFAULT 0')
+            for skill in db.execute('SELECT name,installed FROM skills').fetchall():
+                applied = skill['installed']
+                for row in db.execute('SELECT rowid,* FROM revisions WHERE name=? ORDER BY changed,rowid', (skill['name'],)).fetchall():
+                    if not row['id']:
+                        db.execute('UPDATE revisions SET id=?,applied=? WHERE rowid=?', (uuid.uuid4().hex, applied, row['rowid']))
+                    applied = row['changed']
+                db.execute('DELETE FROM revisions WHERE rowid IN (SELECT rowid FROM revisions WHERE name=? ORDER BY changed DESC,rowid DESC LIMIT -1 OFFSET 3)', (skill['name'],))
             db.execute('INSERT OR IGNORE INTO settings VALUES(1,?)', (json.dumps(DEFAULTS),))
 
     @contextmanager
@@ -74,7 +89,9 @@ class Store:
                 raise ValueError('同名技能已存在；先在后台移除旧技能，避免静默覆盖')
             if db.execute('SELECT count(*) FROM skills').fetchone()[0] >= 40:
                 raise ValueError('最多安装40个技能')
-            db.execute('INSERT INTO skills VALUES(?,?,?,?)', (package['name'], json.dumps(package), 1, time.time()))
+            now = time.time()
+            db.execute('DELETE FROM revisions WHERE name=?', (package['name'],))
+            db.execute('INSERT INTO skills(name,package,enabled,installed,updated) VALUES(?,?,?,?,?)', (package['name'], json.dumps(package), 1, now, now))
         return True
 
     def replace(self, name, package, expected_digest):
@@ -82,14 +99,64 @@ class Store:
             raise ValueError('上游技能名称已变化，未覆盖原技能')
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            old = db.execute('SELECT package FROM skills WHERE name=?', (name,)).fetchone()
+            old = db.execute('SELECT package,updated FROM skills WHERE name=?', (name,)).fetchone()
             if not old or json.loads(old['package']).get('digest') != expected_digest:
                 raise ValueError('技能已被移除或更新，请刷新重试')
-            if old['package'] == json.dumps(package):
+            if json.loads(old['package']).get('digest') == package.get('digest'):
+                db.execute('UPDATE skills SET package=? WHERE name=?', (json.dumps(package), name))
                 return False
-            db.execute('INSERT INTO revisions VALUES(?,?,?)', (name, old['package'], time.time()))
-            db.execute('UPDATE skills SET package=? WHERE name=?', (json.dumps(package), name))
+            self._archive(db, name, old['package'], old['updated'])
+            db.execute('UPDATE skills SET package=?,updated=? WHERE name=?', (json.dumps(package), time.time(), name))
         return True
+
+    def _archive(self, db, name, package, applied):
+        digest = json.loads(package).get('digest')
+        for row in db.execute('SELECT rowid,package FROM revisions WHERE name=?', (name,)).fetchall():
+            if json.loads(row['package']).get('digest') == digest:
+                db.execute('DELETE FROM revisions WHERE rowid=?', (row['rowid'],))
+        db.execute('INSERT INTO revisions(name,package,changed,id,applied) VALUES(?,?,?,?,?)',
+                   (name, package, time.time(), uuid.uuid4().hex, applied))
+        db.execute('DELETE FROM revisions WHERE rowid IN (SELECT rowid FROM revisions WHERE name=? ORDER BY changed DESC,rowid DESC LIMIT -1 OFFSET 3)', (name,))
+
+    def versions(self, name):
+        with self.db() as db:
+            current = db.execute('SELECT package,updated FROM skills WHERE name=?', (name,)).fetchone()
+            if not current or not json.loads(current['package'])['source'].startswith('https://github.com/'):
+                raise ValueError('只有在线安装的技能支持版本管理')
+            package = json.loads(current['package'])
+            history = []
+            for r in db.execute('SELECT * FROM revisions WHERE name=? ORDER BY changed DESC,rowid DESC LIMIT 3', (name,)):
+                p = json.loads(r['package'])
+                history.append({'id': r['id'], 'commit': p.get('commit', ''), 'snapshot_commit': p.get('snapshot_commit', p.get('commit', '')),
+                                'updated': r['applied'], 'archived_at': r['changed'], 'digest': p.get('digest', '')})
+            return {'name': name, 'current': {'commit': package.get('commit', ''), 'snapshot_commit': package.get('snapshot_commit', package.get('commit', '')),
+                    'updated': current['updated'], 'digest': package.get('digest', '')}, 'history': history}
+
+    def restore(self, name, revision_id, expected_digest):
+        from .skills import parse_skill
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            current = db.execute('SELECT package,updated FROM skills WHERE name=?', (name,)).fetchone()
+            if not current:
+                raise ValueError('技能已移除')
+            old = json.loads(current['package'])
+            if not old['source'].startswith('https://github.com/') or old.get('digest') != expected_digest:
+                raise ValueError('当前版本已变化或不是在线技能，请刷新重试')
+            target = db.execute('SELECT * FROM revisions WHERE name=? AND id=?', (name, revision_id)).fetchone()
+            if not target:
+                raise ValueError('指定版本已不在本地历史中，请刷新')
+            package = json.loads(target['package'])
+            parse_skill(package['document'], name)
+            if not package['source'].startswith('https://github.com/'):
+                raise ValueError('历史版本来源无效')
+            # Source switching is an explicit action; rollback only content, not
+            # the configured location used by the next online update.
+            if old.get('install_url'):
+                package['install_url'] = old['install_url']
+            db.execute('DELETE FROM revisions WHERE id=? AND name=?', (revision_id, name))
+            self._archive(db, name, current['package'], current['updated'])
+            db.execute('UPDATE skills SET package=?,updated=? WHERE name=?', (json.dumps(package), time.time(), name))
+            return {'success': True, 'commit': package.get('commit', ''), 'notice': '已从本地快照还原；启停状态、更新地址及运行中任务保持不变。'}
 
     def save_local(self, package):
         from .skills import parse_skill
@@ -113,7 +180,7 @@ class Store:
 
     def catalog(self):
         with self.db() as db:
-            return [{**json.loads(r['package']), 'enabled': bool(r['enabled']), 'installed': r['installed']}
+            return [{**json.loads(r['package']), 'enabled': bool(r['enabled']), 'installed': r['installed'], 'updated': r['updated']}
                     for r in db.execute('SELECT * FROM skills ORDER BY name')]
 
     def skill(self, name, enabled=True):
@@ -141,6 +208,7 @@ class Store:
                     local.unlink(missing_ok=True)
             db.execute('INSERT OR REPLACE INTO seed_state VALUES(?,1)', (name,))
             db.execute('DELETE FROM skills WHERE name=?', (name,))
+            db.execute('DELETE FROM revisions WHERE name=?', (name,))
             db.execute("UPDATE runs SET status='canceled',updated=? WHERE skill=? AND status='running'", (time.time(), name))
 
     def expire(self):

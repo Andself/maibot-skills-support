@@ -149,6 +149,13 @@ def fetch_github(url):
             choices = ', '.join(candidates[:12]) or '无 SKILL.md'
             raise ValueError('请指定某个技能目录：' + choices)
     prefix = directory + '/' if directory else ''
+    # Resolve the latest change to this skill at the immutable download snapshot,
+    # rather than using a commit that only changed another skill in the repo.
+    history_query = urllib.parse.urlencode({'sha': commit, 'path': directory, 'per_page': 1})
+    changes = get('api.github.com', base + '/commits?' + history_query, MAX_TOTAL)
+    version = changes[0].get('sha', '') if isinstance(changes, list) and changes else ''
+    if not re.fullmatch(r'[0-9a-f]{40}', version):
+        raise ValueError('无法确认该技能的最新变更 commit，未安装')
     documents, skipped, total = {}, 0, 0
     for item in blobs:
         full = item['path']
@@ -175,4 +182,4 @@ def fetch_github(url):
     skill = parse_skill(documents['SKILL.md'], directory.split('/')[-1] if directory else repo)
     digest = hashlib.sha256(json.dumps(documents, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     return {**skill, 'files': documents, 'source': f'https://github.com/{owner}/{repo}', 'install_url': url,
-            'commit': commit, 'directory': directory, 'digest': digest, 'skipped_files': skipped}
+            'commit': version, 'snapshot_commit': commit, 'directory': directory, 'digest': digest, 'skipped_files': skipped}
