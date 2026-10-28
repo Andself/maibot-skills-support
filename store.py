@@ -91,6 +91,26 @@ class Store:
             db.execute('UPDATE skills SET package=? WHERE name=?', (json.dumps(package), name))
         return True
 
+    def save_local(self, package):
+        from .skills import parse_skill
+        parse_skill(package['document'], package['name'])
+        root = self.root / 'local-skills'
+        target = root / package['name'] / 'SKILL.md'
+        if not target.resolve().is_relative_to(self.root.resolve()) or root.is_symlink() or target.parent.is_symlink():
+            raise ValueError('本地技能路径无效')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        created = False
+        try:
+            with target.open('x', encoding='utf-8') as output:
+                created = True
+                output.write(package['document'])
+            self.install(package)
+        except Exception:
+            if created:
+                target.unlink(missing_ok=True)
+            raise
+        return package['name']
+
     def catalog(self):
         with self.db() as db:
             return [{**json.loads(r['package']), 'enabled': bool(r['enabled']), 'installed': r['installed']}
@@ -114,6 +134,11 @@ class Store:
 
     def remove(self, name):
         with self.db() as db:
+            row = db.execute('SELECT package FROM skills WHERE name=?', (name,)).fetchone()
+            if row and json.loads(row['package']).get('source') == 'local':
+                local = self.root / 'local-skills' / name / 'SKILL.md'
+                if local.resolve().is_relative_to(self.root.resolve()):
+                    local.unlink(missing_ok=True)
             db.execute('INSERT OR REPLACE INTO seed_state VALUES(?,1)', (name,))
             db.execute('DELETE FROM skills WHERE name=?', (name,))
             db.execute("UPDATE runs SET status='canceled',updated=? WHERE skill=? AND status='running'", (time.time(), name))

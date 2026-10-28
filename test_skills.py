@@ -65,7 +65,7 @@ class FormatTests(unittest.TestCase):
     def test_trigger_negation_quotes_and_commands(self):
         phrases = package()['triggers']
         self.assertTrue(plugin.triggered('帮我查一下这个词的起源', phrases))
-        for text in ('不用查一下了', '不要搜索', '别帮我查一下', '他说“查一下”是什么意思', '/install-skill https://github.com/a/b', '取消调查'):
+        for text in ('不用查一下了', '不要搜索', '别帮我查一下', '他说“查一下”是什么意思', '/install-skill https://github.com/a/b', '取消调查', '帮我创建一个会搜索的技能'):
             self.assertFalse(plugin.triggered(text, phrases), text)
 
     def test_install_must_be_direct_request_not_negation_or_quote(self):
@@ -310,6 +310,82 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.obj.remove('deep-research')
         await self.obj.on_load()
         self.assertEqual(self.obj.store.catalog(), [])
+
+    def local_generator(self):
+        document = '---\nname: meeting-notes\ndescription: 根据会议记录整理决定和待办。\n---\n先明确材料，再整理决定、负责人和待办；未知标注待确认。'
+        self.obj.ctx.llm = types.SimpleNamespace(generate=AsyncMock(return_value={'success': True, 'response': document}))
+        return document
+
+    async def test_create_command_saves_actual_local_file_before_persistence(self):
+        document = self.local_generator()
+        await self.obj.configure(True, admin_session_id='s')
+        description = '整理会议纪要、负责人和待办'
+        self.row['processed_plain_text'] = '上一条消息'
+        r = await self.obj.create_command(stream_id='s', user_id='u', platform='test',
+            text='/create-skill '+description, matched_groups={'skill_description': description})
+        self.assertTrue(r[0])
+        p = self.obj.store.skill('meeting-notes')
+        self.assertEqual(p['source'], 'local')
+        self.assertEqual((Path(self.tmp.name)/'local-skills/meeting-notes/SKILL.md').read_text('utf-8'), document)
+        with self.assertRaises(ValueError):
+            await self.obj.update('meeting-notes')
+        with self.assertRaises(ValueError):
+            await self.obj.set_origin('meeting-notes', 'https://github.com/a/b')
+        await self.obj.remove('meeting-notes')
+        self.assertFalse((Path(self.tmp.name)/'local-skills/meeting-notes/SKILL.md').exists())
+
+    async def test_create_permission_and_message_match_before_model_call(self):
+        self.local_generator()
+        desc = '整理会议纪要'
+        r = await self.obj.create_command(stream_id='s', user_id='u', platform='test',
+            text='/create-skill '+desc, matched_groups={'skill_description': desc})
+        self.assertFalse(r[0])
+        self.obj.ctx.llm.generate.assert_not_called()
+        await self.obj.configure(True, admin_session_id='s')
+        r = await self.obj.create_command(stream_id='s', user_id='other', platform='test',
+            text='/create-skill '+desc, matched_groups={'skill_description': desc})
+        self.assertFalse(r[0])
+        self.obj.ctx.llm.generate.assert_not_called()
+
+    async def test_invalid_generation_and_model_failure_save_nothing(self):
+        self.local_generator()
+        for result in ({'success': False, 'response': ''}, {'success': True, 'response': '随便答复'},
+                       {'success': True, 'response': DOCUMENT}):
+            self.obj.ctx.llm.generate.return_value = result
+            with self.assertRaises(ValueError):
+                await self.obj.generate_local('创建一个整理会议纪要的技能')
+        self.assertEqual(len(self.obj.store.catalog()), 1)
+
+    async def test_duplicate_local_generation_does_not_overwrite(self):
+        self.local_generator()
+        await self.obj.generate_local('整理会议纪要')
+        before = self.obj.store.skill('meeting-notes')
+        with self.assertRaises(FileExistsError):
+            await self.obj.generate_local('整理另一种会议纪要')
+        self.assertEqual(self.obj.store.skill('meeting-notes'), before)
+
+    async def test_create_tool_requires_explicit_admin_intent(self):
+        self.local_generator()
+        await self.obj.configure(True, admin_session_id='s')
+        self.assertFalse((await self.obj.create_tool(description='整理会议纪要', stream_id='s'))['success'])
+        self.row['processed_plain_text'] = '帮我创建一个整理会议纪要的技能'
+        self.assertTrue((await self.obj.create_tool(description='整理会议纪要', stream_id='s'))['success'])
+
+    async def test_builtin_update_is_also_rejected(self):
+        with self.assertRaises(ValueError):
+            await self.obj.update('deep-research')
+
+    async def test_create_revoked_during_generation_does_not_save(self):
+        document = self.local_generator()
+        await self.obj.configure(True, admin_session_id='s')
+        async def revoked(*args, **kwargs):
+            self.obj.store.configure(False, None)
+            return {'success': True, 'response': document}
+        self.obj.ctx.llm.generate.side_effect = revoked
+        self.row['processed_plain_text'] = '帮我创建一个会议纪要技能'
+        result = await self.obj.create_tool(description='整理会议纪要', stream_id='s')
+        self.assertFalse(result['success'])
+        self.assertEqual(len(self.obj.store.catalog()), 1)
 
 
 if __name__ == '__main__':

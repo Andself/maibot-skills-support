@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "anse.skills-support",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "name": "Skills 技能管理",
   "description": "Agent Skills 文档加载、GitHub 安装、聊天安装命令与技能运行记录。",
   "author": {
@@ -24,7 +24,8 @@
   "capabilities": [
     "message.get_recent",
     "chat.get_private_streams",
-    "send.text"
+    "send.text",
+    "llm.generate"
   ],
   "dependencies": [
     {
