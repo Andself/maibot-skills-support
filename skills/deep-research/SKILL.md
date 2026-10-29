@@ -4,7 +4,7 @@ description: 深入调查陌生概念、词源、最新消息和需要多来源�
 license: MIT
 compatibility: 需要宿主提供搜索与网页正文读取工具；文档型技能，无脚本执行依赖。
 metadata:
-  maibot-trigger-phrases: 查一下|查一查|查查|查清|查证|搜一下|搜索|检索|深入调查|认真查|仔细查|好好想想|仔细想想|研究一下
+  maibot-trigger-phrases: 帮我仔细查|帮我查一下|帮我查一查|帮我查查|请查一下|帮我查证|请查证|帮我搜一下|深入调查|仔细查查
   maibot-require-citations: "true"
   maibot-required-tools: search_and_summarize|web_search;fetch_page|web_fetch
 ---

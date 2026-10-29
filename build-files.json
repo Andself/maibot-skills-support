@@ -1,4 +1,15 @@
 {
-  "runtime": ["_manifest.json", "plugin.py", "store.py", "skills.py", "webui.json", "webui/skills.html", "skills/deep-research/SKILL.md"],
-  "package_extra": ["README.md", "LICENSE", "build.py", "build-files.json", ".env.example"]
+  "runtime": [
+    "_manifest.json",
+    "plugin.py",
+    "store.py",
+    "skills.py",
+    "webui.json",
+    "webui/skills.html",
+    "skills/deep-research/SKILL.md"
+  ],
+  "package_extra": [
+    "README.md",
+    "LICENSE"
+  ]
 }

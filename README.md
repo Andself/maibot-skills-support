@@ -6,7 +6,7 @@
 
 为 MaiBot 提供文档型 [Agent Skills](https://agentskills.io/specification) 支持：从 GitHub 安装技能，在聊天中创建技能，用 WebUI 管理、更新和还原，并查看实际工具执行记录。
 
-[![Version](https://img.shields.io/badge/version-0.4.2-blue)](_manifest.json)
+[![Version](https://img.shields.io/badge/version-0.4.3-blue)](_manifest.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MaiBot](https://img.shields.io/badge/MaiBot-1.3.14–1.3.16-orange)](_manifest.json)
 
@@ -174,3 +174,5 @@ python build.py
 欢迎通过 [Issues](https://github.com/Andself/maibot-skills-support/issues) 提交问题或建议。反馈时请提供插件与宿主版本、复现步骤，以及脱敏后的错误信息；不要上传 API Key、账号标识或聊天记录。
 
 [MIT License](LICENSE)
+
+工具调用需携带当前请求的短期凭证，插件复核其会话与最新消息；凭证不持久化，重载或15分钟后失效。它用于阻止仅伪造会话 ID 的跨会话调用，不能替代宿主权限控制，也不保证模型不会泄露上下文。安装 ZIP 仅含运行文件、README 和 LICENSE；构建工具仍在源码仓库中。

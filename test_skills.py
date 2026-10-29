@@ -211,9 +211,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.obj.store.runs()), 1)
         await self.obj.planner(items=[], session_id='s')
         self.assertEqual(self.obj.ctx.send.text.await_count, 1)
-        self.assertFalse((await self.obj.control(operation='finish', stream_id='s'))['success'])
+        self.assertFalse((await self.obj.control(request_token=self.obj.issue_request_token('s', self.row), operation='finish', stream_id='s'))['success'])
         await self.obj.planner(items=evidence('web_search')+evidence('fetch_page', 'body'), session_id='s')
-        self.assertTrue((await self.obj.control(operation='finish', stream_id='s'))['success'])
+        self.assertTrue((await self.obj.control(request_token=self.obj.issue_request_token('s', self.row), operation='finish', stream_id='s'))['success'])
         reply = await self.obj.replyer(items=[], session_id='s')
         self.assertIn('现在可以正常回复', json.dumps(reply, ensure_ascii=False))
 
@@ -227,20 +227,20 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_references_scoped_and_paths_rejected(self):
         await self.obj.planner(items=[], session_id='s')
-        self.assertFalse((await self.obj.read_reference(path='../secret', stream_id='s'))['success'])
-        r = await self.obj.read_reference(path='SKILL.md', stream_id='s')
+        self.assertFalse((await self.obj.read_reference(request_token=self.obj.issue_request_token('s', self.row), path='../secret', stream_id='s'))['success'])
+        r = await self.obj.read_reference(request_token=self.obj.issue_request_token('s', self.row), path='SKILL.md', stream_id='s')
         self.assertIn('深入调查', r['text'])
-        self.assertFalse((await self.obj.read_reference(path='SKILL.md', stream_id='other'))['success'])
+        self.assertFalse((await self.obj.read_reference(request_token=self.obj.issue_request_token('s', self.row), path='SKILL.md', stream_id='other'))['success'])
 
     async def test_wrong_user_denied(self):
         self.row['message_info']['user_info']['user_id'] = 'other'
-        self.assertFalse((await self.obj.control(operation='start', skill_name='deep-research', query='query', stream_id='s'))['success'])
+        self.assertFalse((await self.obj.control(request_token=self.obj.issue_request_token('s', self.row), operation='start', skill_name='deep-research', query='query', stream_id='s'))['success'])
 
     async def test_chat_install_is_hard_admin_check(self):
         url = 'https://github.com/a/repo/tree/main/skill'
         self.row['processed_plain_text'] = '/install-skill '+url
         with patch.object(plugin, 'fetch_github') as fetch:
-            self.assertFalse((await self.obj.install_tool(url=url, stream_id='s', is_admin=True))['success'])
+            self.assertFalse((await self.obj.install_tool(request_token=self.obj.issue_request_token('s', self.row), url=url, stream_id='s', is_admin=True))['success'])
             fetch.assert_not_called()
         await self.obj.configure(True, admin_session_id='s')
         p = package();p['name'] = 'example';p['commit'] = 'a'*40
@@ -250,7 +250,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 user_id='u', platform='test', text='/install-skill '+url)
             self.assertTrue(result[0]);self.assertTrue(result[2]);fetch.assert_called_once()
         self.row['processed_plain_text'] = '普通聊天'
-        self.assertFalse((await self.obj.install_tool(url=url, stream_id='s'))['success'])
+        self.assertFalse((await self.obj.install_tool(request_token=self.obj.issue_request_token('s', self.row), url=url, stream_id='s'))['success'])
 
     async def test_command_context_must_match_real_user_and_url(self):
         await self.obj.configure(True, admin_session_id='s')
@@ -266,7 +266,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.obj.configure(True, admin_session_id='s')
         self.stream['account_id'] = 'different-bot'
         self.row['processed_plain_text'] = '/install-skill https://github.com/a/repo'
-        r = await self.obj.install_tool(url='https://github.com/a/repo', stream_id='s')
+        r = await self.obj.install_tool(request_token=self.obj.issue_request_token('s', self.row), url='https://github.com/a/repo', stream_id='s')
         self.assertFalse(r['success'])
         await self.obj.configure(True, admin_session_id='__clear__')
         self.assertIsNone(self.obj.store.settings()['administrator'])
@@ -277,7 +277,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.row['processed_plain_text'] = '取消调查'
         await self.obj.planner(items=[], session_id='s')
         self.assertEqual(self.obj.store.current('s')['status'], 'canceled')
-        self.assertFalse((await self.obj.control(operation='finish', stream_id='s'))['success'])
+        self.assertFalse((await self.obj.control(request_token=self.obj.issue_request_token('s', self.row), operation='finish', stream_id='s'))['success'])
 
     async def test_sending_failure_does_not_claim_sent(self):
         self.obj.ctx.send.text.side_effect = RuntimeError('offline')
@@ -370,9 +370,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_tool_requires_explicit_admin_intent(self):
         self.local_generator()
         await self.obj.configure(True, admin_session_id='s')
-        self.assertFalse((await self.obj.create_tool(description='整理会议纪要', stream_id='s'))['success'])
+        self.assertFalse((await self.obj.create_tool(request_token=self.obj.issue_request_token('s', self.row), description='整理会议纪要', stream_id='s'))['success'])
         self.row['processed_plain_text'] = '帮我创建一个整理会议纪要的技能'
-        self.assertTrue((await self.obj.create_tool(description='整理会议纪要', stream_id='s'))['success'])
+        self.assertTrue((await self.obj.create_tool(request_token=self.obj.issue_request_token('s', self.row), description='整理会议纪要', stream_id='s'))['success'])
 
     async def test_builtin_update_is_also_rejected(self):
         with self.assertRaises(ValueError):
@@ -386,7 +386,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             return {'success': True, 'response': document}
         self.obj.ctx.llm.generate.side_effect = revoked
         self.row['processed_plain_text'] = '帮我创建一个会议纪要技能'
-        result = await self.obj.create_tool(description='整理会议纪要', stream_id='s')
+        result = await self.obj.create_tool(request_token=self.obj.issue_request_token('s', self.row), description='整理会议纪要', stream_id='s')
         self.assertFalse(result['success'])
         self.assertEqual(len(self.obj.store.catalog()), 1)
 
@@ -465,6 +465,53 @@ class VersionTests(unittest.TestCase):
             self.assertEqual(len(v['history'][0]['id']), 32)
 
 
+class RequestBindingTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = PluginTests.asyncSetUp
+    async def test_forged_session_valid_target_rejected_before_lookup(self):
+        token = self.obj.issue_request_token('s', self.row)
+        with patch.object(self.obj, 'caller', AsyncMock(return_value=({'session_id':'other'}, {'message_id':'other-message'}))), patch.object(self.obj.store, 'current') as lookup:
+            result = await self.obj.control(stream_id='other', request_token=token)
+        self.assertFalse(result['success'])
+        lookup.assert_not_called()
+
+    async def test_missing_forged_expired_and_previous_message_tokens(self):
+        token = self.obj.issue_request_token('s', self.row)
+        for method, kwargs in [(self.obj.control, {}), (self.obj.install_tool, {'url':'https://github.com/a/b'}), (self.obj.create_tool, {'description':'整理纪要'}), (self.obj.read_reference, {'path':'SKILL.md'})]:
+            for bad in ['', 'forged']:
+                self.assertFalse((await method(stream_id='s',request_token=bad,**kwargs))['success'])
+        self.row['message_id'] = 'new-message'
+        self.assertFalse((await self.obj.control(stream_id='s',request_token=token))['success'])
+        token = self.obj.issue_request_token('s', self.row)
+        with patch.object(plugin.time, 'monotonic', return_value=plugin.time.monotonic()+901):
+            self.assertFalse((await self.obj.control(stream_id='s',request_token=token))['success'])
+        await self.obj.on_load()
+        self.assertFalse((await self.obj.control(stream_id='s',request_token=token))['success'])
+
+    async def test_legacy_builtin_migrates_but_custom_edits_and_disabled_state_survive(self):
+        legacy_phrases = '查一下|查一查|查查|查清|查证|搜一下|搜索|检索|深入调查|认真查|仔细查|好好想想|仔细想想|研究一下'
+        lines = DOCUMENT.splitlines(True)
+        legacy = ''.join('  maibot-trigger-phrases: '+legacy_phrases+'\n' if line.strip().startswith('maibot-trigger-phrases:') else line for line in lines)
+        old = plugin.builtin_package(legacy)
+        current = self.obj.store.skill('deep-research')
+        self.obj.store.replace('deep-research', old, current['digest'])
+        self.obj.store.toggle('deep-research', False)
+        await self.obj.on_load()
+        updated = self.obj.store.skill('deep-research', False)
+        self.assertEqual(updated['document'], DOCUMENT)
+        self.assertFalse(self.obj.store.catalog()[0]['enabled'])
+        edited = plugin.builtin_package(legacy+'\n用户自定义备注\n')
+        self.obj.store.replace('deep-research', edited, updated['digest'])
+        await self.obj.on_load()
+        self.assertEqual(self.obj.store.skill('deep-research', False)['document'], edited['document'])
+
+    async def test_thoughts_do_not_start_research_or_send_notice(self):
+        for text in ['让我仔细想想', '我研究一下晚饭吃什么', '搜索这个词是什么意思', '今天学了检索算法']:
+            self.row['processed_plain_text'] = text
+            await self.obj.planner(items=[],session_id='s')
+        self.assertEqual(self.obj.store.runs(), [])
+        self.obj.ctx.send.text.assert_not_called()
+
+
 class ToolDeclarationTests(unittest.TestCase):
     def test_sdk_tool_schemas_keep_parameters_and_hide_host_identity(self):
         from maibot_sdk.components import _build_tool_parameters_schema
@@ -480,5 +527,5 @@ class ToolDeclarationTests(unittest.TestCase):
             self.assertTrue(schema['properties'])
             self.assertNotIn('stream_id', schema['properties'])
             self.assertEqual(info.invoke_method, 'plugin.invoke_tool')
-        self.assertEqual(_build_tool_parameters_schema(found['skill_install_github'].parameters_raw)['required'], ['url'])
+        self.assertEqual(_build_tool_parameters_schema(found['skill_install_github'].parameters_raw)['required'], ['url', 'request_token'])
         self.assertEqual(_build_tool_parameters_schema(found['skill_control'].parameters_raw)['properties']['operation']['enum'], ['start','status','cancel','finish','fail'])
